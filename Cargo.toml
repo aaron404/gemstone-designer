@@ -1,0 +1,26 @@
+[package]
+name = "gem"
+version = "0.1.0"
+authors = ["aaron404 <aaronhill404@gmail.com>"]
+edition = "2018"
+description = "Raymarched Gemstone Designer"
+homepage = "https://github.com/aaron404/gemstone-designer"
+repository = "https://github.com/aaron404/gemstone-designer"
+categories = ["gui", "graphics"]
+keywords = ["glfw", "opengl", "egui", "gui"]
+include = ["**/*.rs", "Cargo.toml"]
+
+
+[dependencies]
+gl = "0.14.0"
+glfw = "0.41"
+egui = "0.13.1"
+egui_glfw_gl = "0.13.1"
+
+[dependencies.clipboard]
+package = "cli-clipboard"
+version = "0.2"
+optional = true
+
+[features]
+default = ["clipboard"]
