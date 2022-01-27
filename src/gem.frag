@@ -6,6 +6,7 @@ out vec4 out_color;
 uniform vec3    iMouse;
 uniform float   iTime;
 uniform vec2    iResolution;
+uniform int     frame;
 
 uniform float   ior;
 
@@ -19,9 +20,9 @@ uniform int     max_bounces;
 uniform int     ss;
 
 #define PI 3.14159265
-#define MAX_STEPS 100
+#define MAX_STEPS 20
 #define MAX_DIST  20.0
-#define SURF_DIST 0.001
+#define SURF_DIST 0.01
 #define EPSILON (SURF_DIST * 2.0)
 
 #define deg2rad(x) ((x) * PI / 180.0)
@@ -76,7 +77,7 @@ float sdf_ncone2(vec3 p, vec3 pos, int n, float r, float theta, float phi) {
     p.xz = vec2(p.x * c + p.z * s, abs(p.z * c - p.x * s));
     float d = dot(p, pn);
     vec3 h = p - d * pn;
-    h.z = min(h.z, h.x * tan(PI / float(n)));
+    h.z = min(h.z, h.x * tan(PI / float(n))); // slightly incorrect for n < 6
     return sign(d) * length(p + h * min(sign(h.y), 0.0));
 }
 

@@ -34,6 +34,7 @@ pub struct UniformHandles {
     mouse: GLint,
     time: GLint,
     resolution: GLint,
+    frame: GLint,
     num_cuts: GLint,
     cuts: GLint,
     girdle_facets: GLint,
@@ -47,6 +48,7 @@ pub struct UniformValues<'a> {
     pub mouse: [f32; 3],
     pub time: f32,
     pub resolution: [f32; 2],
+    pub frame: u32,
     pub num_cuts: u32,
     pub cuts: &'a Vec<Cut>,
     pub girdle_facets: u8,
@@ -150,6 +152,7 @@ impl Triangle {
         let handle_ior = CString::new("ior").unwrap();
         let handle_max_bounces = CString::new("max_bounces").unwrap();
         let handle_ss = CString::new("ss").unwrap();
+        let handle_frame = CString::new("frame").unwrap();
 
         unsafe {
             gl::GenVertexArrays(1, &mut vao);
@@ -158,6 +161,7 @@ impl Triangle {
             let handle_mouse = gl::GetUniformLocation(program, handle_mouse.as_ptr());
             let handle_time = gl::GetUniformLocation(program, handle_time.as_ptr());
             let handle_res = gl::GetUniformLocation(program, handle_res.as_ptr());
+            let handle_frame = gl::GetUniformLocation(program, handle_frame.as_ptr());
             let handle_num_cuts = gl::GetUniformLocation(program, handle_num_cuts.as_ptr());
             let handle_cuts = gl::GetUniformLocation(program, handle_cuts.as_ptr());
             let handle_girdle_facets = gl::GetUniformLocation(program, handle_girdle_facets.as_ptr());
@@ -177,6 +181,7 @@ impl Triangle {
                     mouse: handle_mouse,
                     time: handle_time,
                     resolution: handle_res,
+                    frame: handle_frame,
                     num_cuts: handle_num_cuts,
                     cuts: handle_cuts,
                     girdle_facets: handle_girdle_facets,
@@ -223,6 +228,7 @@ impl Triangle {
             gl::Uniform3f(self.handles.mouse, uniforms.mouse[0], uniforms.mouse[1], uniforms.mouse[2]);
             gl::Uniform1f(self.handles.time, uniforms.time);
             gl::Uniform2f(self.handles.resolution, uniforms.resolution[0], uniforms.resolution[1]);
+            gl::Uniform1i(self.handles.frame, uniforms.frame as i32);
             gl::Uniform1i(self.handles.num_cuts, uniforms.num_cuts as i32);
             gl::Uniform4fv(self.handles.cuts, uniforms.num_cuts as i32, uniforms.cuts.as_ptr()as *const f32);
             gl::Uniform1i(self.handles.girdle_facets, uniforms.girdle_facets as i32);

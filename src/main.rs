@@ -7,8 +7,8 @@ use std::time::Instant;
 use egui_backend::egui::{vec2, Pos2, Rect};
 use egui_glfw_gl::glfw::{Context};
 
-const SCREEN_WIDTH: u32 = 960;
-const SCREEN_HEIGHT: u32 = 540;
+const SCREEN_WIDTH: u32 = 1000;
+const SCREEN_HEIGHT: u32 = 600;
 mod triangle;
 
 struct MousePos {
@@ -24,6 +24,7 @@ struct Gem {
     ior: f32,
     max_bounces: u32,
     ss: u8,
+    frame: u32,
 }
 
 fn main() {
@@ -37,7 +38,8 @@ fn main() {
         girdle_facets: 12,
         ior: 1.333,
         max_bounces: 16,
-        ss: 2,
+        ss: 1,
+        frame: 0,
     };
 
     let mut glfw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
@@ -94,8 +96,8 @@ fn main() {
         //First clear the background to something nice.
         unsafe {
             // Clear the screen to black
-            gl::ClearColor(0.455, 0.302, 0.663, 1.0);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
+            //gl::ClearColor(0.455, 0.302, 0.663, 1.0);
+            //gl::Clear(gl::COLOR_BUFFER_BIT);
         }
         //Then draw our triangle.
         triangle.draw(triangle::UniformValues {
@@ -109,7 +111,10 @@ fn main() {
             ior: gem.ior,
             max_bounces: gem.max_bounces,
             ss: gem.ss,
+            frame: gem.frame,
         });
+
+        gem.frame += 1;
 
         egui::SidePanel::left("Left Panel").show(&egui_ctx, |ui| {
             ui.add(Slider::new(&mut gem.girdle_radius, 0.0..=4.0).text("Girdle Radius"));
@@ -117,13 +122,17 @@ fn main() {
             ui.add(Slider::new(&mut gem.ior, 1.0..=3.0).text("IOR"));
             ui.add(Slider::new(&mut gem.max_bounces, 1..=16).text("max bounces"));
             ui.add(Slider::new(&mut gem.ss, 1..=4).text("supersample"));
-
+            
+            let mut i=0;
             for cut in gem.cuts.iter_mut() {
-                ui.separator();
-                ui.add(Slider::new(&mut cut.num_facets, 3.0..=24.0).text("num facets"));
-                ui.add(Slider::new(&mut cut.azimuth, 0.0..=90.0).text("azimuth"));
-                ui.add(Slider::new(&mut cut.elevation, 0.0..=90.0).text("elevation"));
-                ui.add(Slider::new(&mut cut.radius, 0.0..=2.0).text("radius"));
+                ui.collapsing(format!("cut {i}"), |ui| {
+                    ui.separator();
+                    ui.add(Slider::new(&mut cut.num_facets, 3.0..=24.0).text("num facets"));
+                    ui.add(Slider::new(&mut cut.azimuth, 0.0..=90.0).text("azimuth"));
+                    ui.add(Slider::new(&mut cut.elevation, 0.0..=90.0).text("elevation"));
+                    ui.add(Slider::new(&mut cut.radius, 0.0..=2.0).text("radius"));
+                });
+                i += 1;
             }
             if ui.button("Add cut").clicked() {
                 gem.cuts.push(
