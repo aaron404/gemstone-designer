@@ -4,10 +4,14 @@
 
 use egui_glfw_gl::gl;
 use egui_glfw_gl::gl::types::*;
+use exr::prelude::ReadChannels;
+use exr::prelude::ReadLayers;
 use std::ffi::CString;
 use std::mem;
 use std::ptr;
 use std::str;
+
+extern crate exr;
 
 const VS_SRC: &'static str = "
 #version 450
@@ -42,6 +46,9 @@ pub struct UniformHandles {
     ior: GLint,
     max_bounces: GLint,
     ss: GLint,
+    skybox_mode: GLint,
+    gamma: GLint,
+    exposure: GLint,
 }
 
 pub struct UniformValues<'a> {
@@ -56,6 +63,9 @@ pub struct UniformValues<'a> {
     pub ior: f32,
     pub max_bounces: u32,
     pub ss: u8,
+    pub skybox_mode: u32,
+    pub gamma: f32,
+    pub exposure: f32,
 }
 
 pub struct Triangle {
@@ -64,6 +74,7 @@ pub struct Triangle {
     pub program: GLuint,
     pub vao: GLuint,
     pub vbo: GLuint,
+    pub sky_texture: GLuint,
     pub handles: UniformHandles,
 }
 
@@ -138,9 +149,55 @@ impl Triangle {
         let mut vao = 0;
         let mut vbo = 0;
         let vs = compile_shader(VS_SRC, gl::VERTEX_SHADER);
-        // let fs = compile_shader(FS_SRC, gl::FRAGMENT_SHADER);
         let fs = compile_shader(include_str!("gem.frag"), gl::FRAGMENT_SHADER);
         let program = link_program(vs, fs);
+
+        let image = exr::prelude::read()
+            .no_deep_data()
+            .largest_resolution_level()
+            .all_channels()
+            .all_layers()
+            .all_attributes()
+            .from_file("res/spiaggia_di_mondello_1k.exr")
+            .unwrap();
+        
+        let size = image.attributes.display_window.size;
+        let mut data = vec![0f32; size.0 * size.1 * 4];
+
+        for channel in image.layer_data[0].channel_data.list.iter() {
+            let c = match channel.name.to_string().as_str() {
+                "R" => 0,
+                "G" => 1,
+                "B" => 2,
+                _ => 3,
+            };
+            for (i, val) in channel.sample_data.values_as_f32().enumerate() {
+                data[i * 4 + c] = val;
+            }
+        }
+
+        let mut sky_texture: GLuint = 1;
+        unsafe {
+            gl::GenTextures(1, &mut sky_texture);
+            gl::BindTexture(gl::TEXTURE_2D, sky_texture);
+            gl::TexImage2D(
+                gl::TEXTURE_2D,
+                0,
+                gl::RGBA as i32,
+                size.0 as i32,
+                size.1 as i32,
+                0,
+                gl::RGBA,
+                gl::FLOAT,
+                data.as_mut_ptr() as *const std::os::raw::c_void);
+
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+            gl::BindTexture(gl::TEXTURE_2D, 0);
+
+            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, sky_texture, 0);
+        }
 
         let handle_mouse = CString::new("iMouse").unwrap();
         let handle_time = CString::new("iTime").unwrap();
@@ -153,6 +210,9 @@ impl Triangle {
         let handle_max_bounces = CString::new("max_bounces").unwrap();
         let handle_ss = CString::new("ss").unwrap();
         let handle_frame = CString::new("frame").unwrap();
+        let handle_skybox_mode = CString::new("skybox_mode").unwrap();
+        let handle_gamma = CString::new("gamma").unwrap();
+        let handle_exposure = CString::new("exposure").unwrap();
 
         unsafe {
             gl::GenVertexArrays(1, &mut vao);
@@ -169,6 +229,9 @@ impl Triangle {
             let handle_ior = gl::GetUniformLocation(program, handle_ior.as_ptr());
             let handle_max_bounces = gl::GetUniformLocation(program, handle_max_bounces.as_ptr());
             let handle_ss = gl::GetUniformLocation(program, handle_ss.as_ptr());
+            let handle_skybox_mode = gl::GetUniformLocation(program, handle_skybox_mode.as_ptr());
+            let handle_gamma = gl::GetUniformLocation(program, handle_gamma.as_ptr());
+            let handle_exposure = gl::GetUniformLocation(program, handle_exposure.as_ptr());
 
             Triangle {
                 // Create GLSL shaders
@@ -177,6 +240,7 @@ impl Triangle {
                 program,
                 vao,
                 vbo,
+                sky_texture: sky_texture,
                 handles: UniformHandles {
                     mouse: handle_mouse,
                     time: handle_time,
@@ -189,6 +253,9 @@ impl Triangle {
                     ior: handle_ior,
                     max_bounces: handle_max_bounces,
                     ss: handle_ss,
+                    skybox_mode: handle_skybox_mode,
+                    gamma: handle_gamma,
+                    exposure: handle_exposure,
                 },
             }
         }
@@ -225,6 +292,9 @@ impl Triangle {
                 ptr::null(),
             );
 
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::BindTexture(gl::TEXTURE_2D, self.sky_texture);
+
             gl::Uniform3f(self.handles.mouse, uniforms.mouse[0], uniforms.mouse[1], uniforms.mouse[2]);
             gl::Uniform1f(self.handles.time, uniforms.time);
             gl::Uniform2f(self.handles.resolution, uniforms.resolution[0], uniforms.resolution[1]);
@@ -236,9 +306,14 @@ impl Triangle {
             gl::Uniform1f(self.handles.ior, uniforms.ior);
             gl::Uniform1i(self.handles.max_bounces, uniforms.max_bounces as i32);
             gl::Uniform1i(self.handles.ss, uniforms.ss as i32);
+            gl::Uniform1ui(self.handles.skybox_mode, uniforms.skybox_mode);
+            gl::Uniform1f(self.handles.gamma, uniforms.gamma);
+            gl::Uniform1f(self.handles.exposure, uniforms.exposure);
 
             // Draw a triangle from the 3 vertices
             gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);
+            gl::BindTexture(gl::TEXTURE_2D, 0);
+
         }
     }
 }

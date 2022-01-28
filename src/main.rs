@@ -9,6 +9,7 @@ use egui_glfw_gl::glfw::{Context};
 
 const SCREEN_WIDTH: u32 = 1000;
 const SCREEN_HEIGHT: u32 = 600;
+const NUM_SKYBOX_MODES: u32 = 6;
 mod triangle;
 
 struct MousePos {
@@ -25,6 +26,9 @@ struct Gem {
     max_bounces: u32,
     ss: u8,
     frame: u32,
+    skybox_mode: u32,
+    gamma: f32,
+    exposure: f32,
 }
 
 fn main() {
@@ -40,6 +44,9 @@ fn main() {
         max_bounces: 16,
         ss: 1,
         frame: 0,
+        skybox_mode: 3,
+        gamma: 1.0,
+        exposure: 2.0,
     };
 
     let mut glfw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
@@ -96,8 +103,8 @@ fn main() {
         //First clear the background to something nice.
         unsafe {
             // Clear the screen to black
-            //gl::ClearColor(0.455, 0.302, 0.663, 1.0);
-            //gl::Clear(gl::COLOR_BUFFER_BIT);
+            gl::ClearColor(0.455, 0.302, 0.663, 1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
         }
         //Then draw our triangle.
         triangle.draw(triangle::UniformValues {
@@ -112,6 +119,9 @@ fn main() {
             max_bounces: gem.max_bounces,
             ss: gem.ss,
             frame: gem.frame,
+            skybox_mode: gem.skybox_mode,
+            gamma: gem.gamma,
+            exposure: gem.exposure,
         });
 
         gem.frame += 1;
@@ -122,6 +132,9 @@ fn main() {
             ui.add(Slider::new(&mut gem.ior, 1.0..=3.0).text("IOR"));
             ui.add(Slider::new(&mut gem.max_bounces, 1..=16).text("max bounces"));
             ui.add(Slider::new(&mut gem.ss, 1..=4).text("supersample"));
+            ui.add(Slider::new(&mut gem.skybox_mode, 0..=NUM_SKYBOX_MODES-1).text("skybox mode"));
+            ui.add(Slider::new(&mut gem.gamma, 0.0..=5.0).text("gamma"));
+            ui.add(Slider::new(&mut gem.exposure, 0.0..=10.0).text("exposure"));
             
             let mut i=0;
             for cut in gem.cuts.iter_mut() {

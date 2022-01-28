@@ -16,6 +16,7 @@ gl = "0.14.0"
 glfw = "0.41"
 egui = "0.13.1"
 egui_glfw_gl = "0.13.1"
+exr = "1.4.1"
 
 [dependencies.clipboard]
 package = "cli-clipboard"
@@ -24,3 +25,6 @@ optional = true
 
 [features]
 default = ["clipboard"]
+
+[profile.release]
+lto = true

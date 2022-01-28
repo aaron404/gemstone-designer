@@ -8,16 +8,20 @@ uniform float   iTime;
 uniform vec2    iResolution;
 uniform int     frame;
 
-uniform float   ior;
+uniform uint    skybox_mode;
+uniform float   gamma;
+uniform float   exposure;
 
+uniform float   ior;
 uniform int     girdle_facets;
 uniform float   girdle_radius;
-
 uniform int     num_cuts;
 uniform vec4    cuts[MAX_CUTS];
 
 uniform int     max_bounces;
 uniform int     ss;
+
+uniform sampler2D sky_texture;
 
 #define PI 3.14159265
 #define MAX_STEPS 20
@@ -189,7 +193,22 @@ float ray_march(vec3 ro, vec3 rd, out int id) {
 }
 
 vec3 skybox(vec3 rd) {
-    return mod(rd * 4.0, 1.0);
+    if (skybox_mode == 0) {
+        return mod(rd * 4.0, 1.0);
+    } else if (skybox_mode == 1) {
+        return rd;
+    } else if (skybox_mode == 2) {
+        return vec3(mod(rd.x + rd.y + rd.z, 1.0));
+    } else {
+        rd = normalize(rd);
+        float theta = atan(rd.x, rd.z);
+        float phi   = atan(-rd.y, length(vec2(rd.x, rd.z)));
+        vec2 uv = vec2(0.5 * theta / PI + 0.5, phi / PI + 0.5);
+        vec3 col = texture(sky_texture, uv).rgb;
+        vec3 mapped = 1.0 - exp(-col * exposure);
+        mapped = pow(mapped, vec3(1.0 / gamma));
+        return mapped;
+    }
 }
 
 vec3 ray_march3(vec3 ro, vec3 rd) {
@@ -266,10 +285,10 @@ vec3 gem_march(vec3 ro, vec3 rd) {
         p += rd * abs(d);
         if (abs(d) < SURF_DIST) {
             vec3 n = get_normal(p);
-            vec3 refr = refract(rd, n, ior);
+            vec3 refr = refract(rd, -n, ior);
             if (length(refr) < 0.001) {
                 // total internal reflection
-                rd = reflect(rd, n);
+                rd = reflect(rd, -n);
                 p += n * EPSILON;
             } else {
                 rd = refr;
@@ -278,9 +297,7 @@ vec3 gem_march(vec3 ro, vec3 rd) {
         }
     }
 
-
-    return mix(rd, refl, fresnel);
-    return vec3(fresnel);
+    return mix(skybox(rd), skybox(refl), fresnel);
 }
 
 float get_light(vec3 p) {
@@ -312,7 +329,7 @@ void main() {
     float t = iTime * 0.5;
     
     // ray origin (camera pos)
-    float r = 6.0;
+    float r = 10.0;
     vec3 ro = vec3(-r * sin(t), 0.0, -r * cos(t));
     
     // camera looks towards this point
@@ -365,13 +382,6 @@ void main() {
 
     // Output to screen
     out_color = vec4(col, 1.0);
-
-/*
-        pub radius: f32,
-        pub azimuth: f32,
-        pub elevation: f32,
-        pub num_facets: f32,
-*/
 
     if (iMouse.z > 0.0) {
         float f = float(id) / 4.0;
