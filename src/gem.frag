@@ -8,6 +8,7 @@ uniform float   iTime;
 uniform vec2    iResolution;
 uniform int     frame;
 
+uniform uint    render_mode;
 uniform uint    skybox_mode;
 uniform float   gamma;
 uniform float   exposure;
@@ -16,21 +17,33 @@ uniform float   ior;
 uniform int     girdle_facets;
 uniform float   girdle_radius;
 uniform int     num_cuts;
+uniform float   table;
+uniform float   culet;
 uniform vec4    cuts[MAX_CUTS];
 
 uniform int     max_bounces;
 uniform int     ss;
 
+// for A/B testing
+uniform bool    debug_bool;
+
+
 uniform sampler2D sky_texture;
 
 #define PI 3.14159265
+#define HALF_PI (3.14159265 / 2.0)
 #define MAX_STEPS 20
-#define MAX_DIST  20.0
-#define SURF_DIST 0.01
+#define MIN_DIST  4.0
+#define MAX_DIST  10.0
+#define SURF_DIST 0.005
 #define EPSILON (SURF_DIST * 2.0)
 
 #define deg2rad(x) ((x) * PI / 180.0)
 
+const vec3 UP = vec3(0.0, 1.0, 0.0);
+const vec3 DOWN = vec3(0.0, -1.0, 0.0);
+
+int eval_count = 0;
 
 // rotate vector about y axis
 vec3 rotate_y(vec3 vec, float angle) {
@@ -39,6 +52,22 @@ vec3 rotate_y(vec3 vec, float angle) {
     return vec3(vec.x * c - vec.z * s, vec.y, vec.x * s + vec.z * c);
 }
 
+#define INCLUDE_VIOLET 1
+vec3 spectrum(float x, float lambda) {
+    // map lambda from 0 -> 1 to 2/3 -> 1 to prevent dips in perceived lightness
+    // (see graph of L linked above)
+    lambda = (2.0 + lambda) / 3.0;
+    
+    vec3 abc = vec3(x) - vec3(lambda * 0.5, 0.5, 1.0 - lambda * 0.5);
+    vec3 rgb = 0.5 + 0.5 * cos(PI * clamp(abs(2.0 * abc / lambda), 0.0, 1.0));
+
+    if (INCLUDE_VIOLET == 1) {
+        float f = 2.0;
+        rgb.r += (1.0 - lambda) * 0.25 * (1.0 +  cos(PI * clamp(f * abs(2.0 * (x - 1.0 + lambda / (2.0 * f)) / lambda), 0.0, 1.0)));
+    }
+
+    return rgb;
+}
 
 float sdf_plane(vec3 p, vec3 n, float h) {
     return dot(p, normalize(n)) - h;
@@ -70,7 +99,7 @@ float sdf_nprism(vec3 p, vec3 pos, int n, float r) {
 }
 
 float sdf_ncone2(vec3 p, vec3 pos, int n, float r, float theta, float phi) {
-    float angle = PI * theta / 180.0;
+    float angle = deg2rad(theta);// PI * theta / 180.0;
     vec3 pn = normalize(vec3(1.0 / tan(angle), 1.0, 0.0));
     p -= pos;
     phi = PI * phi / 180.0;
@@ -85,11 +114,25 @@ float sdf_ncone2(vec3 p, vec3 pos, int n, float r, float theta, float phi) {
     return sign(d) * length(p + h * min(sign(h.y), 0.0));
 }
 
-float sdf_gemstone(vec3 p, inout int id) {
+// optimized for speed
+// TODO: optimize trig calculations
+float sdf_ncone3(vec3 p, int n, float radius, float azimuth, float elevation) {
+    elevation = -deg2rad(elevation);
+    azimuth = deg2rad(azimuth);
+    float theta = atan(p.z, p.x);
+    float magnitude = length(p.xz);
+    theta = mod(theta - PI / float(n) - azimuth, 2.0 * PI / float(n)) - PI / float(n);
+    vec2 p2 = magnitude * vec2(sin(theta), cos(theta));
+    float d = p2.y - p.y * tan(elevation) - radius / cos(elevation);
+    return d * cos(elevation);
+}
+
+float sdf_gemstone(vec3 p) {
+
+    eval_count += 1;
 
     float d;
     float d2;
-    id = 0;
 
     // girdle cut
     if (girdle_facets < 3) {
@@ -98,39 +141,38 @@ float sdf_gemstone(vec3 p, inout int id) {
         d = sdf_nprism(p, vec3(0.0), girdle_facets, girdle_radius);
     }
 
+    // table and culet
+    d = max(d, sdf_plane(p, UP, table));
+    d = max(d, sdf_plane(p, DOWN, culet));
+
     d = max(sdf_sphere(p, vec3(0.0), 2.5), d);
 
     float m = (iMouse.y / iResolution.y - 0.5) * 0.5;
     float p2 = (iMouse.x / iResolution.x) * 90.0;
 
-/*
-        pub radius: f32,
-        pub azimuth: f32,
-        pub elevation: f32,
-        pub num_facets: f32,
-*/
-    
+    // xyzw rad azi elev n
     for (int cut=0; cut<num_cuts; cut++) {
+        vec4 c = cuts[cut];
         float theta = deg2rad(90.0 - cuts[cut].z);
-        d2 = sdf_ncone2(p,
-            vec3(0.0, (cuts[cut].x) / cos(theta), 0.0), // radius
-            int(cuts[cut].w),
-            2.0,
-            cuts[cut].z, // cuts[cut].y,
-            cuts[cut].y //cuts[cut].z
-        );
-        //float sub = sdf_nprism(p, vec3(0.0), 12, 2.0 - float(cut) / 10.0);
-        if (d2 > d) {
-            d = d2;
-            id = cut + 1;
+        if (debug_bool) {
+            d2 = sdf_ncone3(p, int(c.w), c.x, c.y, c.z);
+        } else {
+            d2 = sdf_ncone2(p,
+                vec3(0.0, (cuts[cut].x) / cos(theta), 0.0), // radius
+                int(cuts[cut].w),
+                2.0,
+                cuts[cut].z, // cuts[cut].y,
+                cuts[cut].y //cuts[cut].z
+            );
         }
-        //d = max(sub, d);
+
+        d = max(d, d2);
     }
     
     return d;
 }
 
-float get_dist(vec3 p, inout int id) {
+float get_dist(vec3 p) {
     vec4 s = vec4(3.0, 1.0, 0.0, 1.0);
     
     float dist = MAX_DIST;
@@ -139,15 +181,12 @@ float get_dist(vec3 p, inout int id) {
     //dist = min(dist, sdf_octahedron(p, vec3(-3.0, 1.0, 0.0), 1.0));
     //dist = min(dist, sdf_nprism(p, vec3(0.0, 1.0 + iMouse.y / iResolution.y, 0.0), int(iMouse.x / 25.0), 1.0));
     //dist = min(dist, sdf_ncone2(p, vec3(0.0, 1.0 + iMouse.y / iResolution.y, 0.0), int(iMouse.x / 25.0), -1.0, 30.0, 0.3));
-    id = 0;
 
     float d2;
-    d2 = sdf_gemstone(p, id);
+    d2 = sdf_gemstone(p);
+    dist = min(dist, d2);
     if (d2 < dist) {
         dist = d2;
-        id = id;
-    } else {
-        id = 0;
     }
     //dist = min(dist, sdf_gemstone(p, id));
 
@@ -155,41 +194,49 @@ float get_dist(vec3 p, inout int id) {
 }
 
 vec3 get_normal(vec3 p) {
-    int id;
-    float d = get_dist(p, id);
+    float d = get_dist(p);
     vec2 e = vec2(0.01, 0.0);
     
     vec3 n = d - vec3(
-        get_dist(p - e.xyy, id),
-        get_dist(p - e.yxy, id),
-        get_dist(p - e.yyx, id));
+        get_dist(p - e.xyy),
+        get_dist(p - e.yxy),
+        get_dist(p - e.yyx));
     
     return normalize(n);
 }
 
-float ray_march(vec3 ro, vec3 rd, out int id) {
+float ray_march(vec3 ro, vec3 rd) {
     // distance from origin
     float dO = 0.0;
-
-    id = 0;
     
     float count = 0.0;
     for (int i=0; i<MAX_STEPS; i++) {
         vec3 p = ro + rd * dO;
         // distance to scene
-        float dS = get_dist(p, id);
+        float dS = get_dist(p);
         dO += dS;
         count += 1.0;
         if (dS < SURF_DIST) {
             break;
         } else if (dO > MAX_DIST) {
-            id = -100;
             break;
         }
     }
     
     //return count / 10.0;
     return dO;
+}
+
+float get_light(vec3 p) {
+    vec3 light_pos = vec3(0.0, 5.0, 0.0);
+    light_pos.xz += 6.0 * vec2(sin(iTime), -abs(cos(iTime)));
+    vec3 l = normalize(light_pos - p);
+    vec3 n = get_normal(p);
+    
+    float dif = dot(n, l);
+
+    return dot(light_pos - p, light_pos - p) * 0.005;
+    
 }
 
 vec3 skybox(vec3 rd) {
@@ -211,63 +258,27 @@ vec3 skybox(vec3 rd) {
     }
 }
 
-vec3 ray_march3(vec3 ro, vec3 rd) {
-
-    vec3 p = ro;
-    int id;
-
-    int bounces = 0;
-    for (int i=0; i<MAX_STEPS; i++) {
-        float d = get_dist(p, id);
-        p += abs(d) * rd;
-        if (abs(d) < SURF_DIST) {
-            vec3 n = get_normal(p);
-            bounces += 1;
-            if (d < 0.0) {
-                vec3 refr = refract(rd, -n, ior);
-                if (length(refr) < 0.01) {
-                    // total internal reflection
-                    rd = reflect(rd, n);
-                    p -= n * EPSILON;
-                } else {
-                    rd = refr;
-                    //p += n * EPSILON;
-                    break;
-                }
-            } else {
-                rd = refract(rd, -n, 1.0 / ior);
-                return(rd);
-                p -= 2.0 * n * EPSILON;
-            }
-            if (bounces == max_bounces) {
-                break;
-            }
-        }
-        if (length(p) > MAX_DIST) {
-            break;
-        }
-
-    }
-
-    return rd;
-}
-
 vec3 gem_march(vec3 ro, vec3 rd) {
 
     //trace to surface
-    vec3 p = ro;
-    int id;
+    vec3 p = ro + MIN_DIST * rd;
 
     float fresnel = 0.0;
     vec3 refl;
 
+    int num_bounces = 0;
+
     // march initial hit
     for (int i=0; i<MAX_STEPS; i++) {
-        float d = get_dist(p, id);
+        float d = get_dist(p);
         p += rd * d;
         if (d < SURF_DIST) {
+            num_bounces += 1;
             // hit
             vec3 n = get_normal(p);
+            if (render_mode == 1) {
+                return vec3(get_light(p));
+            }
             fresnel = pow(1.0 + dot(rd, n), 5.0);
             refl = reflect(rd, n);
             rd = refract(rd, n, 1.0 / ior);
@@ -281,9 +292,10 @@ vec3 gem_march(vec3 ro, vec3 rd) {
 
     // march internal reflections
     for (int i=0; i<MAX_STEPS; i++) {
-        float d = get_dist(p, id);
+        float d = get_dist(p);
         p += rd * abs(d);
         if (abs(d) < SURF_DIST) {
+            num_bounces += 1;
             vec3 n = get_normal(p);
             vec3 refr = refract(rd, -n, ior);
             if (length(refr) < 0.001) {
@@ -297,22 +309,8 @@ vec3 gem_march(vec3 ro, vec3 rd) {
         }
     }
 
-    return mix(skybox(rd), skybox(refl), fresnel);
-}
 
-float get_light(vec3 p) {
-    vec3 light_pos = vec3(0.0, 3.0, 0.0);
-    light_pos.xz += 6.0 * vec2(sin(iTime), -abs(cos(iTime)));
-    vec3 l = normalize(light_pos - p);
-    vec3 n = get_normal(p);
-    
-    float dif = dot(n, l);
-    
-    int id;
-    float d = ray_march(p + n * EPSILON, l, id);
-    
-    return clamp(min(d, dif), 0.0, 1.0);// / dot(light_pos - p, light_pos - p) * 20.0;
-    
+    return mix(skybox(rd), skybox(refl), fresnel);
 }
 
 
@@ -326,7 +324,7 @@ void main() {
     
     vec3 col = vec3(0.0);
 
-    float t = iTime * 0.5;
+    float t = iTime * 0.05;
     
     // ray origin (camera pos)
     float r = 10.0;
@@ -339,8 +337,7 @@ void main() {
     vec3 rd = normalize(vec3(uv.x, uv.y, 1.0));
     rd = rotate_y(rd, -t);
 
-    int id = 0;
-    float d = ray_march(ro, rd, id);
+    float d = ray_march(ro, rd);
 
     // out_color = vec4(vec3(d / 10.0), 1.0);
     // return;
@@ -357,70 +354,22 @@ void main() {
     vec3 avg_col = vec3(0.0);
     for (int i=0; i<ss; i++) {
         for (int j=0; j<ss; j++) {
+            if (length(uv.xy) > 0.30) {
+                avg_col += skybox(rd);
+                continue;
+            }
             // avg_col += skybox(gem_march(ro + vec3(vec2(i, j) * ds, 0.0), rd));
             avg_col += gem_march(ro + vec3(vec2(i, j) * ds, 0.0), rd);
         }
     }
+    if (render_mode == 1) {
+        float heat = (eval_count / pow(ss, 2.0)) / ((gamma + 6.0) * (exposure + 6.0));
+        col = 1.0 - spectrum(heat * 0.8 + 0.1, 0.0);
+        out_color = vec4(col, 1.0);
+        return;
+    }
+
+
     out_color = vec4(avg_col / pow(ss, 2.0), 1.0);
     return;
-
-
-    if (d < MAX_DIST) {
-        vec3 refl = reflect(rd, n);
-        vec3 refr_r = refract(rd, n, 1.00 / ior);
-        vec3 refr_g = refract(rd, n, 1.01 / ior);
-        vec3 refr_b = refract(rd, n, 1.02 / ior);
-        
-        
-        out_color = vec4(mod(refr_r * 4.0, 1.0).r, mod(refr_g * 4.0, 1.0).g, mod(refr_b * 4.0, 1.0).b, 1.0);
-        return;
-    } else {
-        out_color = vec4(mod(rd * 4.0, 1.0), 1.0);
-        return;
-    }
-
-
-    // Output to screen
-    out_color = vec4(col, 1.0);
-
-    if (iMouse.z > 0.0) {
-        float f = float(id) / 4.0;
-        out_color = vec4(f, 0.0, 0.0, 1.0);
-    }
 }
-/*
-
-float sdf_ncone(vec3 p, vec3 pos, int n, float r) {
-    float theta = atan(p.z, p.x) + 0.2;
-    float x = (2.0 * PI / float(n));
-    theta = abs(mod(theta, x) - x / 2.0);
-    float phi   = PI / float(n);
-    float mag   = length(p.xz);
-    vec2  p2    = mag * vec2(cos(theta), sin(theta));
-    
-    float t = tan(phi);
-    r = r * 1.0 * (pos.y - p.y);
-    
-    float d = 0.0;
-    if (p2.y > r * t) {
-        d = length(p2 - vec2(r, r * t));
-    } else {
-        d = p2.x - r;
-    }
-    
-    return d;
-}
-
-vec3 debug_sdf(vec3 p) {
-    vec3 p2 = mod(abs(p), 1.0) - 0.025;
-    if (p2.x + p2.y < 0.05 || p2.x + p2.z < 0.05 || p2.y + p2.z < 0.05) {
-        //return vec3(0.0);
-    }
-    float d = sdf_gemstone(p);
-    float m = mod(abs(d), 1.0);
-    if (d < 0.0) {
-        return vec3(m, 0, 1.0-m);
-    } else {
-        return vec3(0, m, 1.0-m);
-    }
-} */

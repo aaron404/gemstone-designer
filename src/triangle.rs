@@ -43,12 +43,16 @@ pub struct UniformHandles {
     cuts: GLint,
     girdle_facets: GLint,
     girdle_radius: GLint,
+    table: GLint,
+    culet: GLint,
     ior: GLint,
     max_bounces: GLint,
     ss: GLint,
     skybox_mode: GLint,
     gamma: GLint,
     exposure: GLint,
+    render_mode: GLint,
+    debug_bool: GLint,
 }
 
 pub struct UniformValues<'a> {
@@ -60,12 +64,16 @@ pub struct UniformValues<'a> {
     pub cuts: &'a Vec<Cut>,
     pub girdle_facets: u8,
     pub girdle_radius: f32,
+    pub table: f32,
+    pub culet: f32,
     pub ior: f32,
     pub max_bounces: u32,
     pub ss: u8,
     pub skybox_mode: u32,
     pub gamma: f32,
     pub exposure: f32,
+    pub render_mode: u32,
+    pub debug_bool: bool,
 }
 
 pub struct Triangle {
@@ -158,7 +166,7 @@ impl Triangle {
             .all_channels()
             .all_layers()
             .all_attributes()
-            .from_file("res/spiaggia_di_mondello_1k.exr")
+            .from_file("res/hilly_terrain_01_1k.exr")
             .unwrap();
         
         let size = image.attributes.display_window.size;
@@ -206,6 +214,8 @@ impl Triangle {
         let handle_cuts = CString::new("cuts").unwrap();
         let handle_girdle_facets = CString::new("girdle_facets").unwrap();
         let handle_girdle_radius = CString::new("girdle_radius").unwrap();
+        let handle_table = CString::new("table").unwrap();
+        let handle_culet = CString::new("culet").unwrap();
         let handle_ior = CString::new("ior").unwrap();
         let handle_max_bounces = CString::new("max_bounces").unwrap();
         let handle_ss = CString::new("ss").unwrap();
@@ -213,6 +223,8 @@ impl Triangle {
         let handle_skybox_mode = CString::new("skybox_mode").unwrap();
         let handle_gamma = CString::new("gamma").unwrap();
         let handle_exposure = CString::new("exposure").unwrap();
+        let handle_render_mode = CString::new("render_mode").unwrap();
+        let handle_debug_bool = CString::new("debug_bool").unwrap();
 
         unsafe {
             gl::GenVertexArrays(1, &mut vao);
@@ -226,12 +238,16 @@ impl Triangle {
             let handle_cuts = gl::GetUniformLocation(program, handle_cuts.as_ptr());
             let handle_girdle_facets = gl::GetUniformLocation(program, handle_girdle_facets.as_ptr());
             let handle_girdle_radius = gl::GetUniformLocation(program, handle_girdle_radius.as_ptr());
+            let handle_table = gl::GetUniformLocation(program, handle_table.as_ptr());
+            let handle_culet = gl::GetUniformLocation(program, handle_culet.as_ptr());
             let handle_ior = gl::GetUniformLocation(program, handle_ior.as_ptr());
             let handle_max_bounces = gl::GetUniformLocation(program, handle_max_bounces.as_ptr());
             let handle_ss = gl::GetUniformLocation(program, handle_ss.as_ptr());
             let handle_skybox_mode = gl::GetUniformLocation(program, handle_skybox_mode.as_ptr());
             let handle_gamma = gl::GetUniformLocation(program, handle_gamma.as_ptr());
             let handle_exposure = gl::GetUniformLocation(program, handle_exposure.as_ptr());
+            let handle_render_mode = gl::GetUniformLocation(program, handle_render_mode.as_ptr());
+            let handle_debug_bool = gl::GetUniformLocation(program, handle_debug_bool.as_ptr());
 
             Triangle {
                 // Create GLSL shaders
@@ -250,12 +266,16 @@ impl Triangle {
                     cuts: handle_cuts,
                     girdle_facets: handle_girdle_facets,
                     girdle_radius: handle_girdle_radius,
+                    table: handle_table,
+                    culet: handle_culet,
                     ior: handle_ior,
                     max_bounces: handle_max_bounces,
                     ss: handle_ss,
                     skybox_mode: handle_skybox_mode,
                     gamma: handle_gamma,
                     exposure: handle_exposure,
+                    render_mode: handle_render_mode,
+                    debug_bool: handle_debug_bool,
                 },
             }
         }
@@ -303,12 +323,16 @@ impl Triangle {
             gl::Uniform4fv(self.handles.cuts, uniforms.num_cuts as i32, uniforms.cuts.as_ptr()as *const f32);
             gl::Uniform1i(self.handles.girdle_facets, uniforms.girdle_facets as i32);
             gl::Uniform1f(self.handles.girdle_radius, uniforms.girdle_radius);
+            gl::Uniform1f(self.handles.table, uniforms.table);
+            gl::Uniform1f(self.handles.culet, uniforms.culet);
             gl::Uniform1f(self.handles.ior, uniforms.ior);
             gl::Uniform1i(self.handles.max_bounces, uniforms.max_bounces as i32);
             gl::Uniform1i(self.handles.ss, uniforms.ss as i32);
             gl::Uniform1ui(self.handles.skybox_mode, uniforms.skybox_mode);
             gl::Uniform1f(self.handles.gamma, uniforms.gamma);
             gl::Uniform1f(self.handles.exposure, uniforms.exposure);
+            gl::Uniform1ui(self.handles.render_mode, uniforms.render_mode);
+            gl::Uniform1ui(self.handles.debug_bool, uniforms.debug_bool as u32);
 
             // Draw a triangle from the 3 vertices
             gl::DrawArrays(gl::TRIANGLE_FAN, 0, 4);

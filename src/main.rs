@@ -7,9 +7,10 @@ use std::time::Instant;
 use egui_backend::egui::{vec2, Pos2, Rect};
 use egui_glfw_gl::glfw::{Context};
 
-const SCREEN_WIDTH: u32 = 1000;
-const SCREEN_HEIGHT: u32 = 600;
+const SCREEN_WIDTH: u32 = 1920;
+const SCREEN_HEIGHT: u32 = 1080;
 const NUM_SKYBOX_MODES: u32 = 6;
+const NUM_RENDER_MODES: u32 = 2;
 mod triangle;
 
 struct MousePos {
@@ -22,6 +23,8 @@ struct Gem {
     cuts: Vec<triangle::Cut>,
     girdle_radius: f32,
     girdle_facets: u8,
+    table: f32,
+    culet: f32,
     ior: f32,
     max_bounces: u32,
     ss: u8,
@@ -29,6 +32,8 @@ struct Gem {
     skybox_mode: u32,
     gamma: f32,
     exposure: f32,
+    render_mode: u32,
+    debug_bool: bool,
 }
 
 fn main() {
@@ -40,6 +45,8 @@ fn main() {
         cuts: Vec::new(),
         girdle_radius: 2f32,
         girdle_facets: 12,
+        table: 4f32,
+        culet: 4f32,
         ior: 1.333,
         max_bounces: 16,
         ss: 1,
@@ -47,7 +54,21 @@ fn main() {
         skybox_mode: 3,
         gamma: 1.0,
         exposure: 2.0,
+        render_mode: 0,
+        debug_bool: false,
     };
+
+    // for i in 0..6 {
+    //     gem.cuts.push(
+    //         triangle::Cut {
+    //             radius: 2.0,
+    //             azimuth: 0f32,
+    //             elevation: 30f32,
+    //             num_facets: 4.0f32,
+    //         });
+    //     num_cuts += 1;
+    // }
+    
 
     let mut glfw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
     glfw.window_hint(glfw::WindowHint::ContextVersion(3, 2));
@@ -81,14 +102,15 @@ fn main() {
         pixels_per_point: Some(native_pixels_per_point),
         ..Default::default()
     });
-    let start_time = Instant::now();
 
     //We will draw a crisp white triangle using OpenGL.
     let triangle = triangle::Triangle::new();
     println!("{:?}", triangle.handles);
 
     let mut mouse_pos = MousePos {x: 0f64, y: 0f64, z: 0f32};
+    let mut width = 0f32;
 
+    let start_time = Instant::now();
     while !window.should_close() {
         egui_input_state.input.time = Some(start_time.elapsed().as_secs_f64());
         egui_ctx.begin_frame(egui_input_state.input.take());
@@ -115,6 +137,8 @@ fn main() {
             cuts: &gem.cuts,
             girdle_facets: gem.girdle_facets,
             girdle_radius: gem.girdle_radius,
+            table: gem.table,
+            culet: gem.culet,
             ior: gem.ior,
             max_bounces: gem.max_bounces,
             ss: gem.ss,
@@ -122,27 +146,37 @@ fn main() {
             skybox_mode: gem.skybox_mode,
             gamma: gem.gamma,
             exposure: gem.exposure,
+            render_mode: gem.render_mode,
+            debug_bool: gem.debug_bool,
         });
 
         gem.frame += 1;
+        // if gem.frame == 500 {
+        //     window.set_should_close(true);
+        //     println!("fps: {}", 500.0 / start_time.elapsed().as_secs_f32());
+        // }
 
         egui::SidePanel::left("Left Panel").show(&egui_ctx, |ui| {
+            ui.checkbox(&mut gem.debug_bool, "debug");
             ui.add(Slider::new(&mut gem.girdle_radius, 0.0..=4.0).text("Girdle Radius"));
             ui.add(Slider::new(&mut gem.girdle_facets, 0..=32).text("Girdle facets"));
+            ui.add(Slider::new(&mut gem.table, 0.0..=4.0).text("Table"));
+            ui.add(Slider::new(&mut gem.culet, 0.0..=4.0).text("Culet"));
             ui.add(Slider::new(&mut gem.ior, 1.0..=3.0).text("IOR"));
             ui.add(Slider::new(&mut gem.max_bounces, 1..=16).text("max bounces"));
             ui.add(Slider::new(&mut gem.ss, 1..=4).text("supersample"));
             ui.add(Slider::new(&mut gem.skybox_mode, 0..=NUM_SKYBOX_MODES-1).text("skybox mode"));
+            ui.add(Slider::new(&mut gem.render_mode, 0..=NUM_RENDER_MODES-1).text("render mode"));
             ui.add(Slider::new(&mut gem.gamma, 0.0..=5.0).text("gamma"));
             ui.add(Slider::new(&mut gem.exposure, 0.0..=10.0).text("exposure"));
             
             let mut i=0;
             for cut in gem.cuts.iter_mut() {
-                ui.collapsing(format!("cut {i}"), |ui| {
+                ui.collapsing(format!("cut {}", i), |ui| {
                     ui.separator();
                     ui.add(Slider::new(&mut cut.num_facets, 3.0..=24.0).text("num facets"));
                     ui.add(Slider::new(&mut cut.azimuth, 0.0..=90.0).text("azimuth"));
-                    ui.add(Slider::new(&mut cut.elevation, 0.0..=90.0).text("elevation"));
+                    ui.add(Slider::new(&mut cut.elevation, -90.0..=90.0).text("elevation"));
                     ui.add(Slider::new(&mut cut.radius, 0.0..=2.0).text("radius"));
                 });
                 i += 1;
@@ -189,7 +223,7 @@ fn main() {
                 glfw::WindowEvent::CursorPos(x, y) => {
                     mouse_pos = MousePos {x, y, z: mouse_pos.z};
                     egui_backend::handle_event(event, &mut egui_input_state);
-                }
+                },
                 glfw::WindowEvent::MouseButton  (button, y, _) => {
                     match button {
                         glfw::MouseButtonLeft => { 
@@ -202,7 +236,11 @@ fn main() {
                         _ => {},
                     }
                     egui_backend::handle_event(event, &mut egui_input_state);
-                }
+                },
+                glfw::WindowEvent::Size(x, y) => {
+                    println!("window resized to {}x{}", x, y);
+                    egui_backend::handle_event(event, &mut egui_input_state);
+                },
                 _ => { egui_backend::handle_event(event, &mut egui_input_state); }
             }
         }
