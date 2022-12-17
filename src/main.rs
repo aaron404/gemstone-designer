@@ -2,7 +2,7 @@ use egui::Slider;
 //Alias the backend to something less mouthful
 use egui_glfw_gl as egui_backend;
 
-use std::time::Instant;
+use std::{time::{Instant, Duration}, ops::RangeInclusive};
 
 use egui_backend::egui::{vec2, Pos2, Rect};
 use egui_glfw_gl::glfw::{Context};
@@ -10,7 +10,7 @@ use egui_glfw_gl::glfw::{Context};
 const SCREEN_WIDTH: u32 = 1920;
 const SCREEN_HEIGHT: u32 = 1080;
 const NUM_SKYBOX_MODES: u32 = 6;
-const NUM_RENDER_MODES: u32 = 2;
+const NUM_RENDER_MODES: u32 = 3;
 mod triangle;
 
 struct MousePos {
@@ -26,6 +26,7 @@ struct Gem {
     table: f32,
     culet: f32,
     ior: f32,
+    dispersion: f32,
     max_bounces: u32,
     ss: u8,
     frame: u32,
@@ -33,7 +34,65 @@ struct Gem {
     gamma: f32,
     exposure: f32,
     render_mode: u32,
+    index_wheel: u32,
     debug_bool: bool,
+    debug_float: f32,
+}
+
+struct RefinedRange {
+    start: f32,
+    end: f32,
+    range: f32,
+    max_depth: u32,
+    cur_depth: u32,
+    current: f32,
+    interval: f32,
+}
+
+impl RefinedRange {
+    fn new(start: f32, end: f32, max_depth: u32) -> RefinedRange {
+        if end < start {
+            let (start, end) = (end, start);
+        }
+        if start == end {
+            panic!("start must be < end");
+        }
+        let range = end - start;
+        RefinedRange {
+            start,
+            end,
+            range,
+            max_depth,
+            cur_depth: 0,
+            current: start + range / 2.0f32,
+            interval: range,
+        }
+    }
+
+    fn restart(&mut self) -> RefinedRange {
+        RefinedRange::new(self.start, self.end, self.max_depth)
+    }
+}
+
+impl std::iter::Iterator for RefinedRange {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cur_depth >= self.max_depth {
+            return None;
+        }
+        if self.current > self.end {
+            self.interval *= 0.5;
+            self.current = self.start + self.interval * 0.5;
+            self.cur_depth += 1;
+            if self.cur_depth >= self.max_depth {
+                return None;
+            }
+        }
+        let x = self.current;
+        self.current += self.interval;
+        Some(x)
+    }
 }
 
 fn main() {
@@ -48,14 +107,17 @@ fn main() {
         table: 4f32,
         culet: 4f32,
         ior: 1.333,
+        dispersion: 0.10,
         max_bounces: 16,
         ss: 1,
         frame: 0,
-        skybox_mode: 3,
+        skybox_mode: 0,
         gamma: 1.0,
         exposure: 2.0,
         render_mode: 0,
-        debug_bool: false,
+        index_wheel: 48,
+        debug_bool: true,
+        debug_float: 420.0,
     };
 
     // for i in 0..6 {
@@ -68,8 +130,11 @@ fn main() {
     //         });
     //     num_cuts += 1;
     // }
-    
 
+    // for value in RefinedRange::new(400.0, 700.0, 3) {
+    //     println!("{value}");
+    // }
+    
     let mut glfw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
     glfw.window_hint(glfw::WindowHint::ContextVersion(3, 2));
     glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
@@ -104,13 +169,19 @@ fn main() {
     });
 
     //We will draw a crisp white triangle using OpenGL.
-    let triangle = triangle::Triangle::new();
+    let mut triangle = triangle::Triangle::new(width, height);
     println!("{:?}", triangle.handles);
 
     let mut mouse_pos = MousePos {x: 0f64, y: 0f64, z: 0f32};
     let mut width = 0f32;
 
+    let mut realtime = true;
+    let mut num_samples = 0;
+
+    let mut wavelength_sampler = RefinedRange::new(400.0, 700.0, 6);
+
     let start_time = Instant::now();
+    let mut current_time = start_time.elapsed();
     while !window.should_close() {
         egui_input_state.input.time = Some(start_time.elapsed().as_secs_f64());
         egui_ctx.begin_frame(egui_input_state.input.take());
@@ -120,18 +191,11 @@ fn main() {
         //TODO: Investigate if this is the right way.
         egui_input_state.input.pixels_per_point = Some(native_pixels_per_point);
 
-        //An example of how OpenGL can be used to draw custom stuff with egui
-        //overlaying it:
-        //First clear the background to something nice.
-        unsafe {
-            // Clear the screen to black
-            gl::ClearColor(0.455, 0.302, 0.663, 1.0);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
-        }
-        //Then draw our triangle.
-        triangle.draw(triangle::UniformValues {
+        num_samples += 1;
+
+        let mut uniforms = triangle::UniformValues {
             mouse: [mouse_pos.x as f32, mouse_pos.y as f32, mouse_pos.z as f32],
-            time: start_time.elapsed().as_secs_f32(),
+            time: if realtime { start_time.elapsed().as_secs_f32() } else { current_time.as_secs_f32() },
             resolution: [SCREEN_WIDTH as f32, SCREEN_HEIGHT as f32],
             num_cuts: num_cuts,
             cuts: &gem.cuts,
@@ -140,7 +204,9 @@ fn main() {
             table: gem.table,
             culet: gem.culet,
             ior: gem.ior,
-            max_bounces: gem.max_bounces,
+            dispersion: gem.dispersion,
+            wavelength: 450.0,
+            max_bounces: num_samples,
             ss: gem.ss,
             frame: gem.frame,
             skybox_mode: gem.skybox_mode,
@@ -148,8 +214,33 @@ fn main() {
             exposure: gem.exposure,
             render_mode: gem.render_mode,
             debug_bool: gem.debug_bool,
-        });
+            debug_float: gem.debug_float,
+        };
 
+        if realtime {
+            let lambda = wavelength_sampler.next();
+            unsafe {
+                gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+                gl::Clear(gl::COLOR_BUFFER_BIT);
+            }
+            uniforms.wavelength = 0.0;
+            triangle.draw_realtime(&uniforms);
+            // println!("{}", lambda);
+            
+        } else {
+            let lambda = wavelength_sampler.next();
+            match lambda {
+                Some(lambda) => {
+                    uniforms.wavelength = lambda; 
+                    triangle.draw_accurate(&uniforms);
+                },
+                None => {}
+            }
+            // println!("{}", lambda);
+            // uniforms.wavelength = lambda;
+            // triangle.render(uniforms);
+        }
+        
         gem.frame += 1;
         // if gem.frame == 500 {
         //     window.set_should_close(true);
@@ -157,13 +248,22 @@ fn main() {
         // }
 
         egui::SidePanel::left("Left Panel").show(&egui_ctx, |ui| {
-            ui.checkbox(&mut gem.debug_bool, "debug");
+            if ui.checkbox(&mut realtime, "realtime").changed() {
+                num_samples = 0;
+                current_time = start_time.elapsed();
+                wavelength_sampler = wavelength_sampler.restart();
+                triangle.clear();
+            };
+            ui.checkbox(&mut gem.debug_bool, "debug bool");
+            ui.add(Slider::new(&mut gem.debug_float, 400.0..=700.0).text("debug float"));
+            ui.add(Slider::new(&mut gem.index_wheel, 3..=100).text("Index Wheel"));
             ui.add(Slider::new(&mut gem.girdle_radius, 0.0..=4.0).text("Girdle Radius"));
             ui.add(Slider::new(&mut gem.girdle_facets, 0..=32).text("Girdle facets"));
             ui.add(Slider::new(&mut gem.table, 0.0..=4.0).text("Table"));
             ui.add(Slider::new(&mut gem.culet, 0.0..=4.0).text("Culet"));
             ui.add(Slider::new(&mut gem.ior, 1.0..=3.0).text("IOR"));
-            ui.add(Slider::new(&mut gem.max_bounces, 1..=16).text("max bounces"));
+            ui.add(Slider::new(&mut gem.dispersion, 0.00..=0.1).text("dispersion"));
+            ui.add(Slider::new(&mut gem.max_bounces, 1..=gem.index_wheel).text("max bounces"));
             ui.add(Slider::new(&mut gem.ss, 1..=4).text("supersample"));
             ui.add(Slider::new(&mut gem.skybox_mode, 0..=NUM_SKYBOX_MODES-1).text("skybox mode"));
             ui.add(Slider::new(&mut gem.render_mode, 0..=NUM_RENDER_MODES-1).text("render mode"));

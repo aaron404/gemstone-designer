@@ -10,13 +10,14 @@ categories = ["gui", "graphics"]
 keywords = ["glfw", "opengl", "egui", "gui"]
 include = ["**/*.rs", "Cargo.toml"]
 
-
 [dependencies]
 gl = "0.14.0"
 glfw = "0.41"
 egui = "0.13.1"
 egui_glfw_gl = "0.13.1"
 exr = "1.4.1"
+image = "0.23.14"
+macros = { path = "macros" }
 
 [dependencies.clipboard]
 package = "cli-clipboard"
